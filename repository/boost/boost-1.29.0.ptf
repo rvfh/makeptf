@@ -1,0 +1,54 @@
+# Who brought that package here
+Maintainer="Herve Fache"
+
+# Package information
+Website="http://www.boost.org"
+License="GPL"
+Description="Boost provides free peer-reviewed portable C++ source libraries."
+
+# Comments from maintainer
+Comments=""
+
+# Archive to use and directory it creates (if necessary)
+Archive="boost_1_29_0.tar.gz"
+Directory="boost_1_29_0"
+
+# This is package-specific: expected name of configuration file (this is normalised: 'package_name'-'version_string'.config)
+ConfigFile=
+
+# Dependencies (NOTE: if dependencies are unknown, use 'unset Dependencies')
+Dependencies=(
+  boost-jam
+)
+
+# Patches to apply (in that order)
+Patches=(
+)
+
+# Native/cross-compilation support
+CrossCompilation=no
+NativeCompilation=yes
+
+unset Configure
+
+Make() {
+  cd libs/test/build
+  "$PREFIX/usr/lib/bjam" -sTOOLS=gcc
+  cd -
+  cd libs/thread/build
+  "$PREFIX/usr/lib/bjam" -sTOOLS=gcc
+}
+
+Install() {
+  # Ad-hoc install, stolen from Gisplan's installer
+  mkdir -p "$INSTALL_PREFIX/usr/include/"
+  cp -a boost "$INSTALL_PREFIX/usr/include/"
+  mkdir -p "$INSTALL_PREFIX/usr/lib/"
+  cd libs/test/build
+  cp -a bin/libprg_exec_monitor.a/gcc/debug/runtime-link-dynamic/threading-single/libprg_exec_monitor.a "$INSTALL_PREFIX/usr/lib/"
+  cp -a bin/libtest_exec_monitor.a/gcc/debug/runtime-link-dynamic/threading-single/libtest_exec_monitor.a "$INSTALL_PREFIX/usr/lib/"
+  cp -a bin/libunit_test_framework.a/gcc/debug/runtime-link-static/threading-single/libunit_test_framework.a "$INSTALL_PREFIX/usr/lib/"
+  cd -
+  cd libs/thread/build
+  cp -a bin/libboost_thread.a/gcc/debug/runtime-link-dynamic/threading-multi/libboost_thread.a "$INSTALL_PREFIX/usr/lib/"
+}

@@ -1,0 +1,355 @@
+#!/bin/sh
+#
+# Maintainer: Herve Fache
+# History:
+# Date        Version Description of change
+# 2005-05-24  0.0     Creation
+# 2005-05-24  1.0     First release, without multiple job support
+# 2005-05-25  1.1     Fix target remembered after package is made
+#                     Add noise, deal with empty lines and comments in list
+#                       file, check for errors
+# 2005-05-25  1.2     Do not print which package is being made anymore
+#                     Assume PREFIX is current directory if not specified
+#                       otherwise
+# 2005-05-26  1.3     Add option to erase source directory after work is done
+#                     Change the way we communicate with makeptf
+# 2005-05-26  1.4     Add option to make a package out of the resulting tree
+# 2005-05-26  1.5     Do not keep CVS directories in package
+# 2005-06-06  1.6     Add option for makeptf to be quiet
+# 2005-06-06  1.7     Repair multi-job option
+# 2005-07-19  1.8     Start work on multi-job feature
+# 2005-08-11  2.0     Add option to create RAM disk
+# 2005-08-12  2.1     Correct name, don't think RAM disk, think disk image!
+#                     Repair option check by makeptf
+#                     Improve options parsing
+# 2005-08-12  3.0     Add subproject capability so we can create flash images
+#                       (kernel + ramdisk)
+# 2005-08-12  3.1     Fix paths, get deliverable from sub-project
+# 2005-08-17  3.2     Pass options to sub-project too
+#                     Add option to force re-build of packages, not sub-projects
+#                     Sub-projects are now expected inside current one by
+#                       default
+# 2005-08-17  3.3     Detect changes not to do things twice
+#                     Package creation now uses option -P
+#                     Options -I and -P take the archive as argument, become
+#                       mutually exclusive
+# 2005-08-18  3.4     Fix time-stamping
+# 2005-08-18  3.5     Fix makeptf.gz creation
+# 2005-08-18  3.6     Fix help, remove unused multi-job related code
+# 2005-08-19  4.0     Add option to review all packages
+# 2006-09-04  4.1     Get PREFIX _only_ from makeptf
+#                     Change -p option to -C to mimic make
+# 2006-09-04  4.2     Remove tabs, replace by spaces, fix history
+# 2006-09-07  4.3     Reversed meaning of -d option in makeptf
+#                     Add lock with 'don't do it twice' mechanism
+# 2006-09-08  5.0     Option -t becomes -m in makeptf
+#                     New options -t and -T for tests
+# 2006-09-08  5.1     Let -I and -P co-exist
+#
+# 2006-09-07  TODO    Fix -C option and relative path
+#
+# Variables:
+#  CONFIGDIR  the path to the configuration directory (given by makeptf)
+#  SRCDIR    the path to the source files directory (given by makeptf)
+#
+# Algorithm:
+#  SETUP
+#  BUILD
+#   Configure (from within package directory: $PREFIX/$SRCDIR/$PACKAGE)
+#   Make (from within package directory)
+#   Install (from within package directory, be noisy)
+#   Move log file to $PREFIX/$LOGDIR/$PACKAGE
+
+# This is the ENVIRONMENT section
+PROG=`basename $0`
+LOCALDIR="$PWD"
+cd "`dirname $0`"
+PROGDIR="$PWD"
+cd "$LOCALDIR"
+
+PROGVERSION="v5.1, by Herve Fache."
+
+MAKEPTF_MAGIC="ThIsIsMaGiC"
+
+if [ -n "$MAKEPTF_PREFIX" ]; then
+  MAKEPTF_CHILD="yes"
+fi
+
+usage() {
+  echo "$PROG $PROGVERSION"
+  echo
+  echo "Usage: $PROG [Options]"
+  echo "Usage: $PROG -h|--help"
+  echo "Usage: $PROG -v|--version"
+  echo
+  echo "Options:"
+  echo "  -E              : erase source code when done"
+  echo "  -f              : force re-build of packages in this project only"
+  echo "  -F              : force re-build of packages in sub-projects too"
+  echo "  -I image_name   : create a disk image (implies -E)"
+  echo "  -P package_name : tar and bzip the tree when finished (implies -E)"
+  echo "  -Q              : be quiet"
+  echo "  -t              : run test of packages in this project only"
+  echo "  -T              : run test of packages in sub-projects too"
+  echo "  -u              : force update of packages in this project only"
+  echo "  -U              : force update of packages in sub-projects too"
+  echo "  -h|--help       : print this help"
+  echo "  -v|--version    : print program version"
+  echo
+  echo "Also passes all other options to makeptf bar -d and -n (rejected);"
+  echo "See makeptf --help for details."
+}
+
+# Reset local variables
+MAKEPTF_ARGUMENTS="-L"
+unset MAKEPTFLIST_ARGUMENTS
+unset MAKEPTF_ERASESRC
+unset MAKEPTF_DISKIMAGE
+unset MAKEPTF_PACKAGE
+unset MAKEPTFLIST_QUIET
+
+# Read command line arguments
+while [ -n "$1" ]; do
+  case $1 in
+  -E )  # erase source code when done
+    MAKEPTF_ERASESRC="yes"
+    ;;
+  -f )  # force re-build of packages in this project, not sub-projects
+    MAKEPTF_ARGUMENTS="$MAKEPTF_ARGUMENTS -F"
+    ;;
+# -F is passed automatically to makeptf and makeptf-list children
+  -I )  # create a disk image
+    shift
+    MAKEPTF_DISKIMAGE="$1"
+    MAKEPTF_ERASESRC="yes"
+    ;;
+  -P )  # tar and bzip the tree when finished
+    shift
+    MAKEPTF_PACKAGE="$1"
+    MAKEPTF_ERASESRC="yes"
+    ;;
+  -Q )  # be quiet
+    MAKEPTFLIST_QUIET="yes"
+    MAKEPTF_ARGUMENTS="$MAKEPTF_ARGUMENTS -Q"
+    MAKEPTFLIST_ARGUMENTS="$MAKEPTFLIST_ARGUMENTS $1"
+    ;;
+  -t )  # test this project, not sub-projects
+    MAKEPTF_ARGUMENTS="$MAKEPTF_ARGUMENTS -T"
+    ;;
+# -T is passed automatically to makeptf and makeptf-list children
+  -u )  # update packages and dependencies in this project, not sub-projects
+    MAKEPTF_ARGUMENTS="$MAKEPTF_ARGUMENTS -U"
+    ;;
+# -U is passed automatically to makeptf and makeptf-list children
+  -h | --help )     # print this help
+    usage
+    exit 0
+    ;;
+  -v | --version )  # print program version
+    echo "$PROG $PROGVERSION"
+    exit 0
+    ;;
+  -d | -n )         # Options NOT passed to makeptf
+    echo "$PROG: Option $1 does not make sense here, please remove it from your command line"
+    exit 1
+    ;;
+  * )   # Options for makeptf
+    MAKEPTF_ARGUMENTS="$MAKEPTF_ARGUMENTS $1"
+    # Makeptf-list takes all makeptf options
+    MAKEPTFLIST_ARGUMENTS="$MAKEPTFLIST_ARGUMENTS $1"
+    ;;
+    esac
+  shift;
+done
+
+# First check that makeptf is happy
+if ! CHECKOPTS=$MAKEPTF_MAGIC "$PROGDIR/makeptf" $MAKEPTF_ARGUMENTS > /dev/null; then
+  echo "$PROG: Error reported by makeptf" >&2
+  exit 1
+fi
+
+# makeptf will report the configuration it found
+eval `CHECKOPTS=$MAKEPTF_MAGIC "$PROGDIR/makeptf" $MAKEPTF_ARGUMENTS`
+
+# Look for the list file
+if [ ! -r "$CONFIGDIR/list" ]; then
+  echo "$PROG: List file not found in $CONFIGDIR" >&2
+  exit 2
+fi
+
+# Check lock
+LOCK="$PREFIX/.lock"
+if [ -r "$LOCK" ]; then
+  if [ -z "$MAKEPTF_IGNORELOCK" ]; then
+    echo "$PROG: Lock already taken" >&2
+    exit 3
+  fi
+else
+  if ! touch "$LOCK"; then
+    echo "$PROG: Cannot create lock file" >&2
+    exit 4
+  fi
+  trap 'rm -f "$LOCK"' 0
+fi
+
+# Make all packages and/or sub-projects
+unset MAKEPTF_BUILDER
+unset MAKEPTF_CHANGE
+while read INFORMATION REST; do
+  if [ -z "$INFORMATION" ] || [ "${INFORMATION:0:1}" == "#" ]; then
+    continue
+  fi
+
+  # Is it a sub-project?
+  if [ "${INFORMATION:0:1}" == "%" ]; then
+    # Save prefix / Detect parent/child relationship
+    export MAKEPTF_PREFIX="$PREFIX"
+
+    # Extract information
+    SUBPROJECT=`echo $INFORMATION | cut -d "," -f 1`
+    SUBPROJECT="${SUBPROJECT:1}"
+    OPTION=`echo $INFORMATION | cut -d "," -f 2 -s`
+    DELIVERABLE=`eval echo $INFORMATION | cut -d "," -f 3 -s`
+
+    # Check information
+    if [ -n "$OPTION" -a -z "$DELIVERABLE" ]; then
+      echo "$PROG: Badly formatted information in list file $CONFIGDIR/list"
+      echo "$PROG: Must be %project,option,deliverable, where:-" >&2
+      echo "$PROG: - project is the path to the sub-project" >&2
+      echo "$PROG: - option is the option, usually either -I or -P" >&2
+      echo "$PROG: - deliverable is the absolute path to the deliverable" >&2
+      exit 11
+    fi
+
+    # Enter sub-project
+    if [ "${SUBPROJECT:0:1}" == "/" ]; then
+      PREFIX="$SUBPROJECT"
+    else
+      if ! cd "$PREFIX/$SUBPROJECT"; then
+        echo "$PROG: Failed to enter sub-project directory $SUBPROJECT" >&2
+        exit 12
+      elif [ -z "$MAKEPTFLIST_QUIET" ]; then
+        echo "$PROG: Entering sub-project $SUBPROJECT"
+      fi
+      PREFIX="$PWD"
+    fi
+
+    # Call makeptf-list for sub-project
+    if ! "$PROGDIR/makeptf-list" $MAKEPTFLIST_ARGUMENTS -C "$PREFIX" $OPTION "$DELIVERABLE"; then
+      echo "$PROG: Failed to make sub-project $SUBPROJECT" >&2
+      exit 13
+    fi
+    if [ -z "$MAKEPTFLIST_QUIET" ]; then
+      echo "$PROG: Leaving sub-project $SUBPROJECT"
+    fi
+    if [ -n "$DELIVERABLE" ]; then
+      TIMESTAMP="`dirname "$DELIVERABLE"`/.makeptf-`basename "$DELIVERABLE"`"
+      if [ ! -r "$DELIVERABLE" ]; then
+        echo "$PROG: Sub-project failed to deliver" >&2
+        exit 14
+      elif [ "$DELIVERABLE" -nt "$TIMESTAMP" ]; then
+        MAKEPTF_CHANGE="yes"
+        rm -f "$TIMESTAMP" && touch -r "$DELIVERABLE" "$TIMESTAMP"
+      fi
+    fi
+    export PREFIX="$MAKEPTF_PREFIX"
+    # End detect parent/child relationship
+    unset MAKEPTF_PREFIX
+  else
+    # This is a builder project
+    MAKEPTF_BUILDER="yes"
+
+    # Extract information
+    PACKAGE=`echo $INFORMATION | cut -d "," -f 1`
+    VERSION=`echo $INFORMATION | cut -d "," -f 2 -s`
+    MODULE=`echo $INFORMATION | cut -d "," -f 3 -s`
+
+    # Create program options
+    OPTIONS=
+    # Module
+    if [ -n "$MODULE" ]; then
+      OPTIONS="$OPTIONS -m $MODULE"
+    fi
+    # Once
+    if [ -n "$MAKEPTF_CHANGE" ]; then
+      OPTIONS="$OPTIONS -U"
+    fi
+    # Call makeptf
+    if ! "$PROGDIR/makeptf" $OPTIONS $MAKEPTF_ARGUMENTS $PACKAGE $VERSION; then
+      echo "$PROG: Failed to make package $PACKAGE" >&2
+      exit 21
+    fi
+  fi
+done < "$CONFIGDIR/list"
+
+# Erase sources if required
+if [ -n "$MAKEPTF_ERASESRC" -a -d "$SRCDIR" ]; then
+  if [ -z "$MAKEPTFLIST_QUIET" ]; then
+    echo "$PROG: Removing source code"
+  fi
+  rm -rf "$SRCDIR"
+fi
+
+# Create/update report file (date matters)
+if [ -n "$MAKEPTF_BUILDER" ] && ls *.gz > /dev/null 2>&1; then
+  cd "$LOGDIR"
+  rm -f .newlist .oldlist && ls -ltr *.gz | grep -v makeptf.gz > .newlist
+  if [ -r makeptf.gz ]; then
+    gunzip makeptf.gz -c > .oldlist
+    if ! diff .oldlist .newlist > /dev/null; then
+      rm -f makeptf.gz
+    fi
+    rm -f .oldlist
+  fi
+  if [ ! -r makeptf.gz ]; then
+    gzip --best .newlist -c > makeptf.gz
+  fi
+  rm -f .newlist
+fi
+
+# Do we need to create something?
+if [ -n "$MAKEPTF_ARCHIVE" ]; then
+  # Create a disk image
+  if [ -n "$MAKEPTF_DISKIMAGE" -a "$LOGDIR/makeptf.gz" -nt "$MAKEPTF_DISKIMAGE" ]; then
+    cd "$PREFIX"
+    rm -f "$MAKEPTF_DISKIMAGE"
+    mkdir -p "`dirname "$MAKEPTF_DISKIMAGE"`"
+    SIZE=`du -ks . | cut -f 1`
+    let SIZE="(($SIZE+2047)/1024)*1024"
+    if [ -z "$MAKEPTFLIST_QUIET" ]; then
+      echo "$PROG: Preparing disk image ` basename $MAKEPTF_DISKIMAGE` of size "$SIZE"k"
+    fi
+
+    if ! genext2fs -d . -b $SIZE -D "$CONFIGDIR/devices" | gzip --best > "$MAKEPTF_DISKIMAGE"; then
+      echo "$PROG: disk image creation failed" >&2
+      exit 31
+    elif [ -z "$MAKEPTFLIST_QUIET" ]; then
+      SIZE=`du --si "$MAKEPTF_DISKIMAGE" | cut -f 1`
+      echo "$PROG: Disk image size is $SIZE"
+    fi
+  elif [ -z "$MAKEPTFLIST_QUIET" ]; then
+    echo "$PROG: $MAKEPTF_DISKIMAGE is up to date"
+  fi
+
+  # Package the tree
+  if [ -n "$MAKEPTF_PACKAGE" -a "$LOGDIR/makeptf.gz" -nt "$MAKEPTF_PACKAGE" ]; then
+    cd "$PREFIX"
+    rm -f "$MAKEPTF_PACKAGE"
+    mkdir -p "`dirname "$MAKEPTF_PACKAGE"`"
+    if [ -z "$MAKEPTFLIST_QUIET" ]; then
+      echo "$PROG: Preparing package `basename $MAKEPTF_PACKAGE`"
+    fi
+    if ! tar --exclude=CVS -cjf "$MAKEPTF_PACKAGE" .; then
+      echo "$PROG: Package creation failed" >&2
+      exit 41
+    elif [ -z "$MAKEPTFLIST_QUIET" ]; then
+      SIZE=`du --si "$MAKEPTF_PACKAGE" | cut -f 1`
+      echo "$PROG: Package size is $SIZE"
+    fi
+  elif [ -z "$MAKEPTFLIST_QUIET" ]; then
+    echo "$PROG: $MAKEPTF_PACKAGE is up to date"
+  fi
+fi
+if [ -z "$MAKEPTFLIST_QUIET" -a -z "$MAKEPTF_CHILD" ]; then
+  echo "$PROG: Success"
+fi

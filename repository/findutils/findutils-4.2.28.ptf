@@ -1,0 +1,40 @@
+# Who brought that package here
+Maintainer="Herve Fache"
+
+# Package information
+Website="http://www.gnu.org/software/findutils/"
+License="GPL"
+Description="The GNU Find Utilities are the basic directory searching utilities of the GNU operating system."
+
+# Comments from maintainer
+Comments=""
+
+# Archive to use
+Archive="findutils-4.2.28.tar.gz"
+
+# This is package-specific: expected name of configuration file (this is normalised: 'package_name'-'version_string'.config)
+ConfigFile=
+
+# Dependencies (NOTE: if dependencies are unknown, use 'unset Dependencies')
+Dependencies=(
+)
+
+# Patches to apply (in that order)
+Patches=(
+)
+
+# Native/cross-compilation support
+CrossCompilation=no
+NativeCompilation=yes
+
+Configure() {
+	./configure --prefix="$INSTALL_PREFIX/usr"
+}
+
+Make() {
+	$MAKE
+}
+
+Install() {
+	$MAKE install
+}

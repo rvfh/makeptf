@@ -1,0 +1,56 @@
+# Who brought that package here
+Maintainer="Herve Fache"
+
+# Package information
+Website="http://inpe.br"
+License="LGPL"
+Description=""
+
+# Comments from maintainer
+Comments=""
+
+# Archive to use
+Archive="terralib-3.1.3.tar.gz"
+
+# This is package-specific: expected name of configuration file (this is normalised: 'package_name'-'version_string'.config)
+ConfigFile=
+
+# Dependencies (NOTE: if dependencies are unknown, use 'unset Dependencies')
+Dependencies=(
+)
+
+# Patches to apply (in that order)
+Patches=(
+)
+
+# Native/cross-compilation support
+CrossCompilation=no
+NativeCompilation=yes
+
+Configure() {
+  cd terralibx/tiff
+  mv tiff.pro tiff.pro.tmp
+  sed "s/TARGET = */TARGET = terralibtiff/" tiff.pro.tmp > tiff.pro
+  chmod 750 tiff.pro
+}
+
+Make() {
+  cd terralibx
+  $MAKE -C tiff
+  $MAKE -C shapelib
+  $MAKE -C terralib
+}
+
+Install() {
+  cd terralibx
+  mkdir -p "$INSTALL_PREFIX"/usr/lib/
+  cp -a terralib/*.so* "$INSTALL_PREFIX"/usr/lib/
+  cp -a tiff/*.so* "$INSTALL_PREFIX"/usr/lib/
+  cp -a shapelib/*.so* "$INSTALL_PREFIX"/usr/lib/
+  cd -
+  cd src
+  mkdir -p "$INSTALL_PREFIX"/usr/include/
+  cp -a terralib "$INSTALL_PREFIX"/usr/include/
+  mkdir -p "$INSTALL_PREFIX"/usr/include/terralib/terralibtiff/
+  cp -a tiff/* "$INSTALL_PREFIX"/usr/include/terralib/terralibtiff/
+}

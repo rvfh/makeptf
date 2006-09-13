@@ -1,0 +1,214 @@
+#!/bin/sh
+#
+# Maintainer: Herve Fache
+# History:
+# Date        Version Description of change
+# 2006-09-11  0.0     Creation
+# 2006-09-12  1.0     First release
+#
+# Variables:
+#  PREFIX             the root of the target file system (must be an absolute
+#                       path, or empty)
+#  REPOSITORY         the path/URL of the packages repository
+#                       ([protocol://server]/path/to/packages)
+#  CONFIGDIR          the path to the configuration directory
+#                       (default: $PREFIX/etc/makeptf)
+#  SRCDIR             the path to the source files directory
+#                       (default: $PREFIX/usr/src/makeptf)
+#  LOGDIR             the path to the log files directory
+#                       (default: $PREFIX/var/log/makeptf)
+
+# This is the ENVIRONMENT section
+PROG=`basename $0`
+LOCALDIR="$PWD"
+cd "`dirname $0`"
+PROGDIR="$PWD"
+cd "$LOCALDIR"
+
+export PROGVERSION="v0.0, by Herve Fache."
+
+usage() {
+  echo "$PROG $PROGVERSION"
+  echo
+  echo "Usage: $PROG [Options]"
+  echo "Usage: $PROG -h|--help"
+  echo "Usage: $PROG -v|--version"
+  echo
+  echo "Options:"
+  echo "    -C path           : target path"
+  echo "    -h|--help         : print this help and exit"
+  echo "    -v|--version      : print program version and exit"
+}
+
+# Read command line arguments
+while [ -n "$1" ]; do
+  case ${1:0:1} in
+  '-' )
+    case $1 in
+    -c )  # path to configuration directory ("" for default)
+      shift
+      export CONFIGDIR="$1"
+      ;;
+    -C )  # target root file system path
+      shift
+      PREFIX="$1"
+      if [ "${PREFIX:0:1}" != "/" ]; then
+        PREFIX="$LOCALDIR/$PREFIX"
+        if [ -d "$PREFIX" ]; then
+          cd "$PREFIX"
+          PREFIX="$PWD"
+          cd - > /dev/null
+        # else it will fail later if it must...
+        fi
+      fi
+      export PREFIX
+      ;;
+    -r )  # path/URL to packages repository
+      shift
+      export REPOSITORY="$1"
+      ;;
+    -h | --help )     # print this help and exit
+      usage
+      exit 0
+      ;;
+    -v | --version )  # print program version and exit
+      echo "$PROG $PROGVERSION"
+      exit 0
+      ;;
+    * )
+      error "Option not recognised: $1"
+      usage
+      exit 11
+      ;;
+    esac
+    ;;
+  * )            # Package name or version
+    error "Too many arguments"
+    usage
+    exit 11
+    ;;
+  esac
+  shift;
+done
+
+# Assume current directory for prefix if not defined (overridden by -C option)
+if [ -z "$PREFIX" ]; then
+  export PREFIX="$PWD"
+fi
+
+# Default repository path
+if [ -z "$REPOSITORY" ]; then
+  REPOSITORY=`ls -l /proc/$$/fd/255 | sed "s/.* -> //"`
+  REPOSITORY=`dirname $REPOSITORY`
+  export REPOSITORY=`dirname $REPOSITORY`/repository
+fi
+
+# Check that we have the prefix information
+if [ -n "$PREFIX" -a "${PREFIX:0:1}" != "/" ]; then
+  error "Prefix directory is not an absolute path: $PREFIX"
+  exit 12
+fi
+
+# Make sure we have the configuration directory defined
+if [ -z "$CONFIGDIR" ]; then
+  export CONFIGDIR=$PREFIX/etc/makeptf
+fi
+
+# Look for the configuration file
+if [ ! -r "$CONFIGDIR/config" ]; then
+  # Some top level projects only have sub-projects, nothing to compile, hence no configuration file
+  echo "Configuration file not found in $CONFIGDIR" >&2
+  exit 13
+# Now source the configuration file
+elif ! source "$CONFIGDIR/config"; then
+  echo "Configuration file incorrect: $CONFIGDIR/config" >&2
+  exit 14
+fi
+
+# Check that we have the repository information
+if [ -z "$REPOSITORY" ]; then
+  error "Repository path/URL not specified"
+  exit 15
+fi
+
+# Make sure we have the source files directory defined
+if [ -z "$SRCDIR" ]; then
+  export SRCDIR=$PREFIX/usr/src/makeptf
+fi
+
+# Make sure we have the log files directory defined
+if [ -z "$LOGDIR" ]; then
+  export LOGDIR=$PREFIX/var/log/makeptf
+fi
+
+ptf_usage() {
+  PROG=ptf
+  echo "$PROG $PROGVERSION"
+  echo
+  echo "Usage: $PROG action [package [version [module]]]"
+  echo "Actions:"
+  echo "    s or setup        : setup package"
+  echo "    b or build        : build (configure, make and install) package"
+  echo "    c or configure    : configure package"
+  echo "    m or make         : make package"
+  echo "    i or install      : install package"
+  echo "    t or test         : test package"
+}
+
+ptf() {
+  local action="$1"
+  local package="$2"
+  if [ -n "$package" ]; then
+    local version="$3"
+    if [ -n "$4" ]; then
+      local module=-t $4
+    fi
+
+  elif echo $PWD | fgrep "$SRCDIR" > /dev/null 2>&1; then
+    # find out from location and SRCDIR
+    package=`echo $PWD | sed "s%$SRCDIR/*%%"`
+    package=`echo $package | sed "s%/\+.*%%"`
+  fi
+
+  if [ -z "$package" ]; then
+    echo "Missing package" >&2
+    return 1
+  fi
+
+  case T$action in
+  Ts | Tsetup )
+    makeptf --setup $module $package $version
+    ;;
+  Tb | Tbuild )
+    makeptf --build $module $package $version
+    ;;
+  Tc | Tconfigure )
+    makeptf --configure $module $package $version
+    ;;
+  Tm | Tmake )
+    makeptf --make $module $package $version
+    ;;
+  Ti | Tinstall )
+    makeptf --install $module $package $version
+    ;;
+  Tt | Ttest )
+    makeptf --test $module -u $package $version
+    ;;
+  T )
+    echo "Missing action" >&2
+    echo "Type $PROG --help for help" >&2
+    return 1
+    ;;
+  T* )
+    echo "Unknown action: $action" >&2
+    echo "Type $PROG --help for help" >&2
+    return 1
+    ;;
+  esac
+}
+
+# Export some data
+export -f ptf ptf_usage
+
+cd "$PREFIX"
+exec bash

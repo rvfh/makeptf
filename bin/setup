@@ -1,0 +1,52 @@
+#!/bin/sh
+#
+# Maintainer: Herve Fache
+# History:
+# 2005-06-01	0.0	Creation
+# 2005-06-01	1.0	First version
+# 2005-06-01	1.1	Link sbin to bin for cramfs
+# 2005-06-06	1.2	Remove sbin if possible
+#			Run makeptf-list quietly
+# 2006-09-03    2.0     Change folder setup
+#
+# Variables:
+#	PREFIX		the root of the target file system (must be an absolute
+#			path, or empty)
+#
+# Arguments:
+#	<none>
+#
+# Algorithm:
+#	CREATE ENVIRONMENT FILES
+#	MAKE TOOLS
+#
+
+# This is the ENVIRONMENT section
+REALDIR=`ls -l /proc/$$/fd/255 | sed "s/.* -> //"`
+PROG=`basename $REALDIR`
+PROGDIR=`dirname $REALDIR`
+BASEDIR=`dirname $PROGDIR`
+
+PROGVERSION="v2.0, by Herve Fache."
+
+SETUP_PROJECT=$BASEDIR/projects/setup
+
+cd $BASEDIR
+
+echo "Creating path setting file"
+
+if ! rm -f set_path || ! echo "export PATH=$PROGDIR:\`echo \$PATH | sed \"s%$PROGDIR:%%\"\`" > set_path; then
+	echo "$PROG: Cannot create tools path setup file."
+	exit 12
+fi
+
+echo "Making tools"
+
+source set_path
+
+if ! makeptf-list -Q -C $SETUP_PROJECT || ! cp -a $SETUP_PROJECT/usr/bin/* $PROGDIR; then
+	echo "$PROG: Failed to create tools."
+	exit 22
+fi
+
+echo "All done"

@@ -1,0 +1,1217 @@
+#!/bin/sh
+#
+# Maintainer: Herve Fache
+# History:
+# Date        Version Description of change
+# 2005-02-16  0.0     Creation
+# 2005-02-22  1.0     First release
+# 2005-04-07  2.0     Add target support, mainly for kernel modules/image
+#                       distinction
+#                     Move source one level up not to confuse usage (kernel in
+#                       /usr/src/linux)
+#                     Add option to only build
+# 2005-04-08  2.1     Bug fix: move makeptf.tmp one directory up, remove
+#                       correct old log file
+# 2005-05-24  3.0     Add variable to check options for makeptf-list's use
+#                     Slightly change the order in which things are done
+#                     Add support for relative paths for prefix if given as
+#                       option
+#                     Add support for local repository
+#                     Actually use CONFIGDIR, as specified
+# 2005-05-24  3.1     Echo errors to standard error
+#                     Echo configuration directory back to makeptf-list
+#                     Add option to never do the job twice
+#                     Add option to echo the list of dependencies to standard
+#                       output and exit
+#                     Add a bit of quietness when asked to
+# 2005-05-25  3.2     Avoid the rm printing when deleting the temporary file by
+#                       unsetting rm
+# 2005-05-25  3.3     Re-order usage output, add option to erase source
+#                       directory after work is done
+# 2005-05-26  3.4     Report all global variables back to makeptf-list
+# 2005-05-27  4.0     Zip the log files
+# 2005-05-27  4.1     Modify dependency output format
+#                     Fix dependency check
+# 2005-06-10  4.2     Make it work with busybox for native compilation support
+# 2005-06-10  4.3     Stop in case of native/cross compilation impossibility
+# 2005-07-12  4.4     Fix little bug when checking what compilation type is
+#                       supported
+# 2005-07-26  4.5     Support archive names with dots in them (quick fix)
+# 2005-07-27  4.6     Fix bug in report file compression/copy
+#                     Fix version checking for dependencies
+# 2005-08-17  4.7     Forcing 're-build' cancels 'once' option if after on the
+#                       command line
+#                     Do/demand less before returning the configuration
+#                     Review version determination and temp. file management
+#                     Change meaning of MAKEPTF_SRCDIR (it is now the source
+#                       directory!)
+# 2005-08-19  4.8     Add option to review dependencies
+# 2005-08-19  4.9     Keep the new option in line with the force options
+# 2005-08-19  5.0     Do not rebuild by default
+# 2006-09-04  5.1     Assume PREFIX is current directory if not specified
+#                     Change -p option to -C to mimic make
+#                     Use default for REPOSITORY
+#                     Fix -f
+# 2006-09-04  5.2     Remove tabs, replace by spaces, fix history
+# 2006-09-04  5.3     New scheme to get versions of packages
+# 2006-09-05  5.4     Review the way we get files
+# 2006-09-05  5.5     Deal with problematic packages (new field: Directory)
+# 2006-09-06  5.6     Review install scheme, so we can create packages
+# 2006-09-06  5.7     Keep old log files, make CVS noisy, correct history
+# 2006-09-07  5.8     Split getting files and getting development files (CVS)
+# 2006-09-07  5.9     Reverse meaning of -d option; default is know to build
+#                       missing/oudated dependencies
+#                     Add lock with 'don't do it twice' mechanism
+#                     Review update decision so that changes trigger re-compile
+# 2006-09-08  6.0     Clearly separate development- and package-related process
+#                     Target becomes module, option changed to -m
+#                     Add support but error for svn protocol
+#                     Add support for package testing
+# 2006-09-08  6.1     Differentiate error sentences
+#                     Become sensitive to PTF file and patches modifications
+#                     Add color code for messages
+# 2006-09-08  6.2     Fix output, improve readability
+#                     Add cleaning function for CVS
+# 2006-09-09  6.3     Review update/flush mechanism
+# 2006-09-12  6.4     Add actions for makeptf-shell's use
+#                     Report only if installed
+#
+# 2006-09-08  TODO    Use checksums for files, do not re-download if match
+#
+# Variables:
+#  PREFIX             the root of the target file system (must be an absolute
+#                       path, or empty)
+#  REPOSITORY         the path/URL of the packages repository
+#                       ([protocol://server]/path/to/packages)
+#  CONFIGDIR          the path to the configuration directory
+#                       (default: $PREFIX/etc/makeptf)
+#  SRCDIR             the path to the source files directory
+#                       (default: $PREFIX/usr/src/makeptf)
+#  LOGDIR             the path to the log files directory
+#                       (default: $PREFIX/var/log/makeptf)
+#  CHECKOPTS          to check the options passed for correctness (value must
+#                       be $MAKEPTF_MAGIC)
+#
+# Algorithm:
+#  ENVIRONMENT
+#   Read command line arguments
+#   Check variables (PREFIX and REPOSITORY can be defined in the environment)
+#   Read configuration file (REPOSITORY, SRCDIR and LOGDIR can be defined here)
+#  CHECK
+#   Create directories
+#   Get and source PTF
+#   Resolve dependencies
+#  SETUP
+#   Get archive and patches
+#   Untar and patch
+#   Obtain configuration file
+#  BUILD
+#   Configure (from within package directory: $PREFIX/$SRCDIR/$PACKAGE)
+#   Make (from within package directory)
+#   Install (from within package directory, be noisy)
+#   Move log file to $PREFIX/$LOGDIR/$PACKAGE
+#
+# Log file contents:
+#  Version used
+#  Configure log
+#  Make log
+#  Install log: aliases must be created to make cp, mkdir, ln... noisy
+
+# This is the ENVIRONMENT section
+PROG=`basename $0`
+LOCALDIR="$PWD"
+cd "`dirname $0`"
+PROGDIR="$PWD"
+cd "$LOCALDIR"
+
+PROGVERSION="v6.4, by Herve Fache."
+
+MAKEPTF_MAGIC="ThIsIsMaGiC"
+
+usage() {
+  echo "$PROG $PROGVERSION"
+  echo
+  echo "Usage: $PROG [Options] package_name [package_version]"
+  echo "Usage: $PROG -h|--help"
+  echo "Usage: $PROG -v|--version"
+  echo
+  echo "Options:"
+  echo "    -b                : only build the package (already setup)"
+  echo "    -c config_dir     : path to configuration directory"
+  echo "    -C path           : target path"
+  echo "    -d                : attempt to resolve dependencies"
+  echo "    -f                : flush and re-build package"
+  echo "    -F                : flush and re-build package and its dependencies"
+  echo "    -l                : list dependencies to standard output"
+  echo "    -m module         : build specific module out of package (package-specific)"
+  echo "    -n                : do not check dependencies"
+  echo "    -q                : be quiet"
+  echo "    -r repository     : path/URL to packages repository"
+  echo "    -s                : only setup the package (do not build)"
+  echo "    -u                : update package"
+  echo "    -U                : update package and dependencies"
+  echo "    -h|--help         : print this help and exit"
+  echo "    -v|--version      : print program version and exit"
+}
+
+error() {
+  echo -e "\E[38m$PROG: $1" >&2
+  tput sgr0
+}
+
+warning() {
+  echo -e "\E[33m$PROG: $1" >&2
+  tput sgr0
+}
+
+title() {
+  echo -e "\E[31m$PROG: $1" >&5
+  tput sgr0
+}
+
+goodnews() {
+  echo -e "\E[32m$PROG: $1" >&5
+  tput sgr0
+}
+
+majorinfo() {
+  echo -e "\E[34m$PROG: $1" >&6
+  echo "$PROG: $1" >> "$BUILD_LOG"
+  tput sgr0
+}
+
+action() {
+  echo -e "\E[35m$PROG: $1" >&6
+  tput sgr0
+}
+
+info() {
+  echo -e "\E[36m$PROG: $1" >&6
+  tput sgr0
+}
+
+get_file() {
+  local file
+  local protocol
+
+  # Append repository if needed
+  if ! echo "$1" | grep "/" > /dev/null 2>&1; then
+    file="$REPOSITORY/$PACKAGE/$1"
+  else
+    file="$1"
+  fi
+
+  # Determine protocol
+  if echo "$file" | grep ":" > /dev/null 2>&1; then
+    protocol=`echo $file | sed "s/:.*//"`
+  else
+    protocol="file"
+  fi
+
+  # Get the file
+  case "$protocol" in
+  "file" )
+    if cp -fp "$file" . > /dev/null 2>&1; then
+      return 0
+    fi
+    ;;
+  "http" | "ftp" )
+    if wget -N "$file" > /dev/null 2>&1; then
+      return 0
+    fi
+    ;;
+  * )
+    error "Unknown file protocol: $protocol"
+    return 1
+    ;;
+  esac
+  error "Failed to get file: $file"
+  return 2
+}
+
+get_compare_file() {
+  local file="$1"
+  local text="$2"
+  local modified=
+
+  if [ -r "$file" ]; then
+    mv "$file" "$file.old"
+  else
+    modified="yes"
+    if [ -n "$text" ]; then
+      info "New $text: $file"
+    fi
+  fi
+  if ! get_file "$file"; then
+    if [ -z "$modified" ]; then
+      mv "$file.old" "$file"
+    fi
+    return 2
+  fi
+  if [ -z "$modified" ]; then
+    if ! diff -q "$file.old" "$file" > /dev/null; then
+      modified="yes"
+      if [ -n "$text" ]; then
+        info "Modified $text: $file"
+      fi
+    fi
+    rm -f "$file.old"
+  fi
+  if [ -n "$modified" ]; then
+    return 1
+  fi
+  return 0
+}
+
+get_dir() {
+  # Extract info
+  local protocol=`echo $1 | sed "s/:.*//"`
+  local project=`echo "$1" | sed "s%$protocol:/\+%%"`
+  local output="$MAKEPTF_WORKDIR/$PROG-dev.log"
+
+  # Get the file
+  local modified=
+  case "$protocol" in
+  "cvs" )
+    # cvs://project/path/to/subproject
+    majorinfo "Get/update CVS project: $project"
+    if ! cvs -q -z3 get -d "$DIRECTORY" "$project" > "$output" 2> /dev/null; then
+      error "Failed to get/update project"
+      return 11
+    elif grep -m1 -e "^C " "$output" > /dev/null 2>&1; then
+      error "Cannot build while conflicts exist"
+      return 12
+    elif grep -m1 -e "^[MPU] " "$output" > /dev/null 2>&1; then
+      modified="yes"
+    fi
+    ;;
+  "svn" )
+    error "Support for Subversion is not implemented yet"
+    return 22
+    ;;
+  * )
+    error "Unknown development protocol: $protocol"
+    return 2
+    ;;
+  esac
+  if [ -r "$output" ]; then
+    cat "$output" | tee -a "$BUILD_LOG" >&5
+    rm -f "$output"
+    if [ -n "$modified" ]; then
+      return 1
+    else
+      info "No new files"
+    fi
+  fi
+}
+
+clean_dir() {
+  case "$1" in
+  "cvs" )
+    # cvs://project/path/to/subproject
+    cd "$2"
+    if [ ! -r CVS/Entries ]; then
+      error "Directory not under a CVS control: $2"
+      return 11
+    else
+      find . -maxdepth 1 -printf "%y %P\n" | while read type filename; do
+        if [ -n "$filename" -a "$filename" != "CVS" ]; then
+          case $type in
+          f )
+            if ! grep -q -e "^/$filename/" CVS/Entries; then
+              rm -f "$filename" || return 12
+            fi
+            ;;
+          d )
+            if ! grep -q -e "^D/$filename/" CVS/Entries; then
+              rm -rf "$filename" || return 13
+            else
+              info "Entering $filename"
+              clean_dir $1 "$filename" || return 14
+              info "Leaving $filename"
+            fi
+            ;;
+          * )
+            rm -f "$filename" || return 15
+            ;;
+          esac
+        fi
+      done
+    fi
+    cd - > /dev/null
+    ;;
+  "svn" )
+    error "Support for Subversion is not implemented yet"
+    return 22
+    ;;
+  * )
+    error "Unknown cleaning protocol: $protocol"
+    return 2
+    ;;
+  esac
+}
+
+needs_update() {
+  MAKEPTF_UPDATE="yes"
+  if ! rm -f "$ZPACKAGE_LOG"; then
+    warning "Failed to remove old log file $ZPACKAGE_LOG"
+  fi
+}
+
+# Reset local variables
+MAKEPTF_ARGUMENTS="-L"
+unset MAKEPTF_ACTION
+unset MAKEPTF_BUILD
+unset MAKEPTF_NOAUTODEPS
+unset MAKEPTF_ERASESRC
+unset MAKEPTF_FLUSH
+unset MAKEPTF_FLUSHDEPS
+unset MAKEPTF_LISTDEPS
+unset MAKEPTF_MODULE
+unset MAKEPTF_NODEPS
+unset MAKEPTF_QUIET
+unset MAKEPTF_SETUP
+unset MAKEPTF_SHOWDESC
+unset MAKEPTF_TEST
+unset MAKEPTF_TESTDEPS
+unset MAKEPTF_UPDATE
+unset MAKEPTF_UPDATEDEPS
+unset MAKEPTF_VERYQUIET
+
+unset PACKAGE
+unset VERSION
+
+# Read command line arguments
+while [ -n "$1" ]; do
+  case ${1:0:1} in
+  '-' )
+    case $1 in
+    -b )  # Build, but do not setup unless told to explicitely
+      MAKEPTF_BUILD="yes"
+      MAKEPTF_ARGUMENTS="$MAKEPTF_ARGUMENTS $1"
+      ;;
+    -c )  # path to configuration directory ("" for default)
+      shift
+      CONFIGDIR="$1"
+      ;;
+    -C )  # target root file system path
+      shift
+      PREFIX="$1"
+      if [ "${PREFIX:0:1}" != "/" ]; then
+        PREFIX="$LOCALDIR/$PREFIX"
+        if [ -d "$PREFIX" ]; then
+          cd "$PREFIX"
+          PREFIX="$PWD"
+          cd - > /dev/null
+        # else it will fail later if it must...
+        fi
+      fi
+      ;;
+    -d )  # check but do not resolve dependencies
+      MAKEPTF_NOAUTODEPS="yes"
+      ;;
+    -e )  # erase source code when done
+      MAKEPTF_ERASESRC="yes"
+      MAKEPTF_ARGUMENTS="$MAKEPTF_ARGUMENTS $1"
+      ;;
+    -f )  # force re-build of package (not dependencies)
+      MAKEPTF_FLUSH="yes"
+      ;;
+    -F )  # force re-build of package and all dependencies (implies -f)
+      MAKEPTF_FLUSH="yes"
+      MAKEPTF_FLUSHDEPS="yes"
+      MAKEPTF_ARGUMENTS="$MAKEPTF_ARGUMENTS $1"
+      ;;
+    -l )  # list dependencies to standard output
+      MAKEPTF_LISTDEPS="yes"
+      ;;
+    -L )  # Ignore the fact that the lock is taken (for children, internal use only)
+      MAKEPTF_IGNORELOCK="yes"
+      MAKEPTF_ARGUMENTS="$MAKEPTF_ARGUMENTS $1"
+      ;;
+    -m )  # build specific module out of package (package-specific)
+      shift
+      MAKEPTF_MODULE="$1"
+      ;;
+    -n )  # do not check dependencies
+      MAKEPTF_NODEPS="yes"
+      ;;
+    -q )  # be quieter
+      MAKEPTF_QUIET="yes"
+      MAKEPTF_ARGUMENTS="$MAKEPTF_ARGUMENTS $1"
+      ;;
+    -qq )  # be much quieter
+      MAKEPTF_QUIET="yes"
+      MAKEPTF_VERYQUIET="yes"
+      MAKEPTF_ARGUMENTS="$MAKEPTF_ARGUMENTS $1"
+      ;;
+    -Q )  # only show description
+      MAKEPTF_QUIET="yes"
+      MAKEPTF_VERYQUIET="yes"
+      MAKEPTF_SHOWDESC="yes"
+      MAKEPTF_ARGUMENTS="$MAKEPTF_ARGUMENTS $1"
+      ;;
+    -r )  # path/URL to packages repository
+      shift
+      REPOSITORY="$1"
+      ;;
+    -s )  # Setup, but do not build unless told to explicitely
+      MAKEPTF_SETUP="yes"
+      MAKEPTF_ARGUMENTS="$MAKEPTF_ARGUMENTS $1"
+      ;;
+    -t )  # Test package once built, before installing
+      MAKEPTF_TEST="yes"
+      ;;
+    -T )  # Test package and dependencies once built, before installing
+      MAKEPTF_TEST="yes"
+      MAKEPTF_TESTDEPS="yes"
+      MAKEPTF_ARGUMENTS="$MAKEPTF_ARGUMENTS $1"
+      ;;
+    -u )  # update package
+      needs_update
+      ;;
+    -U )  # update package and dependencies
+      needs_update
+      MAKEPTF_UPDATEDEPS="yes"
+      MAKEPTF_ARGUMENTS="$MAKEPTF_ARGUMENTS $1"
+      ;;
+    --setup )
+      MAKEPTF_SETUP="yes"
+      MAKEPTF_NOAUTODEPS="yes"
+      ;;
+    --build )
+      MAKEPTF_BUILD="yes"
+      MAKEPTF_NOAUTODEPS="yes"
+      ;;
+    --configure )
+      MAKEPTF_BUILD="yes"
+      MAKEPTF_NOAUTODEPS="yes"
+      MAKEPTF_ACTION="Configure"
+      ;;
+    --make )
+      MAKEPTF_BUILD="yes"
+      MAKEPTF_NOAUTODEPS="yes"
+      MAKEPTF_ACTION="Make"
+      ;;
+    --install )
+      MAKEPTF_BUILD="yes"
+      MAKEPTF_NOAUTODEPS="yes"
+      MAKEPTF_ACTION="Install"
+      ;;
+    --test )
+      MAKEPTF_BUILD="yes"
+      MAKEPTF_NOAUTODEPS="yes"
+      MAKEPTF_TEST="yes"
+      MAKEPTF_ACTION="Test"
+      ;;
+    -h | --help )     # print this help and exit
+      usage
+      exit 0
+      ;;
+    -v | --version )  # print program version and exit
+      echo "$PROG $PROGVERSION"
+      exit 0
+      ;;
+    * )
+      error "Option not recognised: $1"
+      usage
+      exit 11
+      ;;
+    esac
+    ;;
+  * )            # Package name or version
+    if [ -z "$PACKAGE" ]; then
+      PACKAGE="$1"
+    elif [ -z "$VERSION" ]; then
+      VERSION="$1"
+    else
+      error "Too many arguments"
+      usage
+      exit 11
+    fi
+    ;;
+  esac
+  shift;
+done
+
+# Assume current directory for prefix if not defined (overridden by -C option)
+if [ -z "$PREFIX" ]; then
+  export PREFIX="$PWD"
+fi
+
+# Default repository path
+if [ -z "$REPOSITORY" ]; then
+  REPOSITORY=`ls -l /proc/$$/fd/255 | sed "s/.* -> //"`
+  REPOSITORY=`dirname $REPOSITORY`
+  REPOSITORY=`dirname $REPOSITORY`/repository
+fi
+
+# Sort out the output file
+if [ -n "$MAKEPTF_QUIET" ]; then
+  exec 6> /dev/null
+else
+  exec 6>&1
+fi
+if [ -n "$MAKEPTF_VERYQUIET" ]; then
+  exec 5> /dev/null
+else
+  exec 5>&1
+fi
+
+# Check that we have the prefix information
+if [ -n "$PREFIX" -a "${PREFIX:0:1}" != "/" ]; then
+  error "Prefix directory is not an absolute path: $PREFIX"
+  exit 12
+fi
+
+# Make sure we have the configuration directory defined
+if [ -z "$CONFIGDIR" ]; then
+  CONFIGDIR=$PREFIX/etc/makeptf
+fi
+
+# Look for the configuration file
+if [ ! -r "$CONFIGDIR/config" ]; then
+  # Some top level projects only have sub-projects, nothing to compile, hence no configuration file
+  if [ "$CHECKOPTS" != "$MAKEPTF_MAGIC" ]; then
+    error "Configuration file not found in $CONFIGDIR"
+    exit 13
+  fi
+# Now source the configuration file
+elif ! source "$CONFIGDIR/config"; then
+  error "Configuration file incorrect: $CONFIGDIR/config"
+  exit 14
+fi
+
+# Check that we have the repository information
+if [ -z "$REPOSITORY" ]; then
+  error "Repository path/URL not specified"
+  exit 15
+fi
+
+# Make sure we have the source files directory defined
+if [ -z "$SRCDIR" ]; then
+  SRCDIR=$PREFIX/usr/src/makeptf
+fi
+
+# Make sure we have the log files directory defined
+if [ -z "$LOGDIR" ]; then
+  LOGDIR=$PREFIX/var/log/makeptf
+fi
+
+# Stop here for options check; echo configuration directory back to caller
+if [ "$CHECKOPTS" == "$MAKEPTF_MAGIC" ]; then
+  echo "PREFIX=\"$PREFIX\""
+  echo "REPOSITORY=\"$REPOSITORY\""
+  echo "CONFIGDIR=\"$CONFIGDIR\""
+  echo "SRCDIR=\"$SRCDIR\""
+  echo "LOGDIR=\"$LOGDIR\""
+  exit 0
+fi
+
+# Set working directory
+MAKEPTF_WORKDIR="$SRCDIR/$PACKAGE"
+
+# Create log files directory
+if [ ! -d "$LOGDIR" ] && ! mkdir -p "$LOGDIR"; then
+  error "Cannot create log files directory or one of its parents: $LOGDIR"
+  exit 16
+fi
+
+# Determine log file name
+BUILD_LOG="$MAKEPTF_WORKDIR/$PROG.log"
+if [ -z "$MAKEPTF_MODULE" ]; then
+  PACKAGE_LOG="$LOGDIR/$PACKAGE"
+else
+  PACKAGE_LOG="$LOGDIR/$PACKAGE:$MAKEPTF_MODULE"
+fi
+ZPACKAGE_LOG="$PACKAGE_LOG".gz
+
+# Check that we know what package to deal with
+if [ -z "$PACKAGE" ]; then
+  error "Package not specified"
+  exit 17
+fi
+
+# Check lock
+LOCK="$PREFIX/.lock"
+if [ -r "$LOCK" ]; then
+  if [ -z "$MAKEPTF_IGNORELOCK" ]; then
+    error "Lock already taken"
+    exit 18
+  fi
+else
+  if ! touch "$LOCK"; then
+    error "Cannot create lock file"
+    exit 19
+  fi
+  trap 'rm -f "$LOCK"' 0
+fi
+
+# Check whether we are the first to make this package/module
+IDENTIFIER="$PACKAGE:$MAKEPTF_MODULE"
+if grep -q "$IDENTIFIER" "$LOCK"; then
+  # Someone already did the job
+  exit 0
+else
+  echo "$IDENTIFIER" >> "$LOCK"
+fi
+
+# This is the CHECK section
+title "Dealing with $PACKAGE $VERSION $MAKEPTF_MODULE"
+
+# Exports for dependencies (options -c, -C, and -r not passed)
+export CONFIGDIR
+export PREFIX
+export REPOSITORY
+
+# Remove previous setup if any
+if [ -n "$MAKEPTF_FLUSH" ]; then
+  action "Removing previous setup"
+  # Only remove files
+  rm -f "$MAKEPTF_WORKDIR"/* 2> /dev/null
+  # Remove install directory
+  rm -rf "$MAKEPTF_WORKDIR"/_install
+  needs_update
+fi
+
+# Create work directory
+if [ ! -d "$MAKEPTF_WORKDIR" ] && ! mkdir -p "$MAKEPTF_WORKDIR"; then
+  error "Cannot create source files directory: $MAKEPTF_WORKDIR"
+  exit 21
+fi
+
+# Change to work directory
+if ! cd "$MAKEPTF_WORKDIR" 2> /dev/null; then
+  error "Cannot change directory to $MAKEPTF_WORKDIR"
+  exit 22
+fi
+
+# Check whether there is something installed
+if [ -r "$ZPACKAGE_LOG" ]; then
+  INSTALLED_VERSION=`zcat "$ZPACKAGE_LOG" | grep "makeptf: Version:" | sed "s%makeptf: Version: *%%"`
+else
+  INSTALLED_VERSION=
+  info "Package $PACKAGE is not installed"
+  needs_update
+fi
+
+# Check whether there is something setup
+if [ -r versions ]; then
+  SETUP_VERSION=`grep -e "^default" versions | cut -d ' ' -f 2`
+else
+  SETUP_VERSION=$INSTALLED_VERSION
+fi
+
+# Check package information
+if [ -z "$MAKEPTF_BUILD" ]; then
+  # Determine version
+  if [ -z "$VERSION" ]; then
+    # Get versions file to check version
+    if ! get_file versions; then
+      exit 23
+    fi
+    VERSION=`grep -e "^default" versions | cut -d ' ' -f 2`
+    if [ -z "$VERSION" ]; then
+      error "Cannot determine default version"
+      exit 24
+    elif [ -z "$MAKEPTF_UPDATE" -a "$VERSION" != "$SETUP_VERSION" ]; then
+      info "Package version changed"
+      needs_update
+      # Remove previous stuff
+      MAKEPTF_FLUSH="yes"
+    fi
+  fi
+
+  # Get PTF
+  majorinfo "Get package information for $PACKAGE-$VERSION"
+  get_compare_file "$PACKAGE-$VERSION.ptf" "PTF file"
+  STATUS=$?
+  if [ "$STATUS" == 1 ]; then
+    needs_update
+    MAKEPTF_FLUSH="yes"
+  elif [ "$STATUS" != 0 ]; then
+    exit 25
+  fi
+else
+  VERSION=`cat "$BUILD_LOG" | grep "makeptf: Version:" | sed "s%makeptf: Version: *%%"`
+  if [ -z "$VERSION" ]; then
+    error "Cannot retrieve version from log file"
+    exit 24
+  fi
+  if [ ! -r "$PACKAGE-$VERSION.ptf" ]; then
+    error "Cannot find PTF file"
+    exit 25
+  fi
+fi
+
+# Now source the package tayloring file
+unset Maintainer Website License Description Comments
+unset Dependencies Archive Directory Patches ConfigFile
+unset Configure Make Install Test
+if ! source "$PACKAGE-$VERSION.ptf"; then
+  error "Package tayloring file incorrect: $PACKAGE-$VERSION.ptf"
+  exit 26
+fi
+
+# List dependencies to standard output and exit
+if [ -n "$MAKEPTF_LISTDEPS" ]; then
+  echo -n "$PACKAGE,$VERSION: "
+  for DEPENDENCY in ${Dependencies[@]}; do
+    echo -n "$DEPENDENCY "
+  done
+  echo
+  exit 0
+fi
+
+# Print description immediately is quiet mode
+if [ -n "$MAKEPTF_SHOWDESC" ]; then
+  if [ -n "$Description" ]; then
+    echo -e "\E[36mDescription for package $PACKAGE:"
+    tput sgr0
+    echo "$Description"
+  else
+    echo -e "\E[36mNo description for package $PACKAGE"
+    tput sgr0
+  fi
+  echo
+fi
+
+# Maintainer's comments
+if [ -n "$Comments" ]; then
+  echo
+  echo -e "\E[33mComments from Maintainer ($Maintainer):"
+  tput sgr0
+  echo "$Comments"
+  echo
+  sleep 3
+fi
+
+# Check dependencies
+if [ -z "$MAKEPTF_NODEPS" ]; then
+  for DEPENDENCY in ${Dependencies[@]}; do
+    # Extract information
+    DEP_PACKAGE=`echo $DEPENDENCY | cut -d "," -f 1`
+    DEP_VERSION=`echo $DEPENDENCY | cut -d "," -f 2 -s`
+    DEP_MODULE=`echo $DEPENDENCY | cut -d "," -f 3 -s`
+
+    # Create program option
+    if [ -n "$DEP_MODULE" ]; then
+      DEP_MODULE_OPTION="-m $DEP_MODULE"
+    fi
+
+    # Look for log file
+    if [ -r "$LOGDIR/$DEP_PACKAGE.gz" ]; then
+      DEP_LOG="$LOGDIR/$DEP_PACKAGE.gz"
+    elif [ -r "$LOGDIR/$DEP_PACKAGE:$DEP_MODULE.gz" ]; then
+      DEP_LOG="$LOGDIR/$DEP_PACKAGE:$DEP_MODULE.gz"
+    else
+      unset DEP_LOG
+    fi
+
+    # Get version if required
+    if [ -n "$DEP_LOG" -a -n "$DEP_VERSION" ]; then
+      # Get version
+      DEP_LOG_VERSION=`zcat "$DEP_LOG" | grep "makeptf: Version:" | sed "s%makeptf: Version: *%%"`
+    else
+      unset DEP_LOG_VERSION
+    fi
+
+    # Are we allowed to build/update dependencies?
+    if [ -n "$MAKEPTF_NOAUTODEPS" ]; then
+      # No, so check they are available and the correct version
+      if [ -z "$DEP_LOG" -o "$DEP_LOG_VERSION" != "$DEP_VERSION" ]; then
+        error "Dependency missing: $DEPENDENCY"
+        exit 103
+      fi
+    elif ! "$PROGDIR/$PROG" $MAKEPTF_ARGUMENTS $DEP_MODULE_OPTION $DEP_PACKAGE $DEP_VERSION; then
+      # Dependency failed
+      error "Dependency failed: $DEPENDENCY"
+      exit 27
+    fi
+
+    # Is the dependency more recent?
+    if [ -z "$MAKEPTF_UPDATE" -a "$DEP_LOG" -nt "$ZPACKAGE_LOG" ]; then
+      info "Dependency changed: $DEP_PACKAGE"
+      needs_update
+    fi
+  done
+fi
+
+# Determine protocol for archive
+if echo "$Archive" | grep ":" > /dev/null 2>&1; then
+  ARCHIVE_PROTOCOL=`echo $Archive | sed "s/:.*//"`
+else
+  ARCHIVE_PROTOCOL="file"
+fi
+
+# Check type of source
+if [ "$ARCHIVE_PROTOCOL" == "cvs" -o "$ARCHIVE_PROTOCOL" == "svn" ]; then
+  ARCHIVE_DEVEL="yes"
+else
+  ARCHIVE_DEVEL=
+fi
+
+# Set source directory
+if [ -n "$Directory" ]; then
+  DIRECTORY="$Directory"
+else
+  DIRECTORY="$PACKAGE-$VERSION"
+fi
+MAKEPTF_SRCDIR="$MAKEPTF_WORKDIR/$DIRECTORY"
+
+# Do this if told to, or if not told to not do it
+if [ -n "$MAKEPTF_SETUP" -o -z "$MAKEPTF_BUILD" ]; then
+  # This is the SETUP section
+  title "Setting up $PACKAGE $VERSION $MAKEPTF_MODULE"
+
+  # Backup old log file
+  if [ -r "$BUILD_LOG" ]; then
+    if ! cp -f "$BUILD_LOG" "$BUILD_LOG".tmp || ! mv --backup=numbered "$BUILD_LOG".tmp "$BUILD_LOG"; then
+      error "Error backing up old log file in $MAKEPTF_WORKDIR"
+      exit 32
+    fi
+  fi
+
+  # Create log file
+  if ! rm -f "$BUILD_LOG" || ! echo "$PROG: Package:    $PACKAGE" > "$BUILD_LOG"; then
+    error "Error creating log file in $MAKEPTF_WORKDIR"
+    exit 33
+  fi
+  echo "$PROG: Version:    $VERSION" >> "$BUILD_LOG"
+  echo "$PROG: License:    $License" >> "$BUILD_LOG"
+  echo "$PROG: Maintainer: $Maintainer" >> "$BUILD_LOG"
+  if [ -n "$Comments" ]; then
+    echo "$PROG: Comments:   $Comments" >> "$PACKAGE_LOG"
+  fi
+
+  # Get configuration file
+  if [ -n "$ConfigFile" ];then
+    if ! cp -af "$CONFIGDIR/$ConfigFile" . > /dev/null 2>&1; then
+      error "Error copying configuration file: $ConfigFile"
+      exit 34
+    fi
+  fi
+
+  # Move previous log file in case we crash
+  if [ -r "$ZPACKAGE_LOG" ] && ! mv "$ZPACKAGE_LOG" "$ZPACKAGE_LOG.old"; then
+    error "Could not move log file away"
+    exit 35
+  else
+    # .old files are not to stay
+    trap 'rm -f *.old' ERR
+  fi
+
+  # Get necessary files/snapshot
+  if [ -z "$ARCHIVE_DEVEL" ]; then
+    if [ -n "${Patches[0]}" ]; then
+      # Get patches, check whether to re-build or not
+      action "Get patches for $PACKAGE-$VERSION"
+      for FILE in ${Patches[@]}; do
+        get_compare_file "$FILE" "patch"
+        STATUS=$?
+        if [ "$STATUS" == 1 ]; then
+          needs_update
+          MAKEPTF_FLUSH="yes"
+        elif [ "$STATUS" != 0 ]; then
+          exit 41
+        fi
+      done
+    fi
+
+    # Get package archive [again] if we're going to do something with it TODO checksum
+    if [ -n "$MAKEPTF_UPDATE" ]; then
+      action "Get package for $PACKAGE-$VERSION"
+      if ! get_file "$Archive"; then
+        exit 42
+      fi
+    fi
+  else
+    # Cleanup if needed
+    if [ -n "$MAKEPTF_FLUSH" ]; then
+      majorinfo "Clean"
+      if ! clean_dir "$ARCHIVE_PROTOCOL" "$MAKEPTF_SRCDIR"; then
+        error "Error cleaning development area"
+        exit 45
+      fi
+    fi
+
+    # Always update
+    get_dir "$Archive"
+    STATUS=$?
+    if [ "$STATUS" == 1 ]; then
+      # Risk or certitude of modification
+      info "Some files updated or under development"
+      # Update required as files were potentially changed
+      needs_update
+    elif [ "$STATUS" != 0 ]; then
+      exit 46
+    fi
+  fi
+
+  # If no update needed, stop here
+  if [ -z "$MAKEPTF_UPDATE" ]; then
+    # Move back previous log file
+    if ! mv "$ZPACKAGE_LOG.old" "$ZPACKAGE_LOG"; then
+      error "Could not move log file $ZPACKAGE_LOG back"
+      exit 51
+    fi
+    goodnews "Nothing to do for $PACKAGE"
+    exit 0
+  else
+    # Remove previous log file
+    if ! rm -f "$ZPACKAGE_LOG.old"; then
+      warning "Warning: could not remove old log file $ZPACKAGE_LOG.old"
+    fi
+    trap '' ERR
+  fi
+
+  # Check type of source
+  if [ -z "$ARCHIVE_DEVEL" ]; then
+    # We were told to re-build the package
+    if [ -n "$MAKEPTF_FLUSH" ]; then
+      majorinfo "Clean"
+      rm -rf "$MAKEPTF_SRCDIR"
+    fi
+
+    # Only re-build if necessary
+    if [ ! -d "$MAKEPTF_SRCDIR" ]; then
+      # Remove any previous failure if any
+      rm -rf "$MAKEPTF_SRCDIR-failed" 2> /dev/null
+
+      # Set clean-up trap
+      trap 'cd "$MAKEPTF_WORKDIR"; mv "$MAKEPTF_SRCDIR" "$MAKEPTF_SRCDIR-failed" 2> /dev/null; error "Failed directory is now $MAKEPTF_SRCDIR-failed"' ERR
+
+      # Determine archive extension
+      ARCHIVE=`basename $Archive`
+      if echo "$ARCHIVE" | grep -e ".tar.bz2$" > /dev/null 2>&1; then
+        OPTION="j"
+      elif echo "$ARCHIVE" | grep -e ".tar.gz$" > /dev/null 2>&1; then
+        OPTION="z"
+      elif echo "$ARCHIVE" | grep -e ".tgz$" > /dev/null 2>&1; then
+        OPTION="z"
+      else
+        error "Unknown extension for archive $ARCHIVE"
+        error "Expected .tar.bz2 .tar.gz or .tgz (deprecated)"
+        exit 52
+      fi
+
+      # Untar archive
+      majorinfo "Untar"
+      tar xv"$OPTION"f "$ARCHIVE" 2>&1 | tee -a "$BUILD_LOG" >&5
+      STATUS=(${PIPESTATUS[@]})
+      if [ ${STATUS[0]} != 0 ]; then
+        error "Error untarring archive: $ARCHIVE"
+        exit 53
+      fi
+
+      # Apply all patches
+      if [ -n "${Patches[0]}" ]; then
+        cd "$MAKEPTF_SRCDIR"
+        majorinfo "Patch"
+        for FILE in ${Patches[@]}; do
+          # Determine patch extension
+          EXTENSION=`echo $FILE | sed "s/.*\.//"`
+          if [ "$EXTENSION" == "bz2" ]; then
+            CAT="bzcat"
+          elif [ "$EXTENSION" == "gz" ]; then
+            CAT="zcat"
+          else
+            CAT="cat"
+          fi
+          $CAT ../$FILE | patch -p1 2>&1 | tee -a "$BUILD_LOG" >&5
+          STATUS=(${PIPESTATUS[@]})
+          if [ ${STATUS[0]} != 0 ] || [ ${STATUS[1]} != 0 ]; then
+            error "Error applying patch: $FILE"
+            exit 54
+          fi
+        done
+      fi
+
+      # Remove trap
+      trap '' ERR
+    else
+      info "NOT untarring/patching: directory $DIRECTORY exists"
+    fi
+  fi
+
+  # Let the user know that it's done
+  if [ -n "$MAKEPTF_SETUP" ]; then
+    goodnews "Package $PACKAGE version $VERSION successfully setup."
+    exit 0
+  fi
+fi
+
+# No update, so no need to build
+if [ -z "$MAKEPTF_UPDATE" ]; then
+  goodnews "No need to re-build $PACKAGE"
+  exit 0
+fi
+
+# This is the BUILD section
+title "Building $PACKAGE $VERSION $MAKEPTF_MODULE"
+
+# Check that we indeed have the source code
+if [ ! -d "$MAKEPTF_SRCDIR" ]; then
+  error "No source code to build $PACKAGE"
+  exit 55
+fi
+
+# Check compilation mode according to what the package supports
+# Note 1: $CROSS_COMPILE must not be empty when cross-compiling; relying on PREFIX being empty would be wrong here
+# Note 2: The error codes MUST NOT be modified, as other programs rely on their values
+# Note 3: These tests are done only here to allow for the installation to take place. This could probably be improved
+
+# Check that cross-compilation is supported
+if [ -n "$CROSS_COMPILE" ] && [ "${CrossCompilation:0:1}" != "y" ]; then
+  error "Package does not support cross-compilation"
+  exit 101
+fi
+
+# Check that native compilation is supported
+if [ -z "$CROSS_COMPILE" ] && [ "${NativeCompilation:0:1}" != "y" ]; then
+  error "Package does not support native compilation"
+  exit 102
+fi
+
+# Set up temp file and its cleaning trap
+MAKEPTF_TEMP="$MAKEPTF_WORKDIR/makeptf.tmp"
+trap 'rm -f "$MAKEPTF_TEMP"' ERR
+
+# Keep local variables safe
+MAKEPTF_INSTALL_PREFIX="$MAKEPTF_WORKDIR/_install"
+MAKEPTF_PREFIX="$PREFIX"
+MAKEPTF_REPOSITORY="$REPOSITORY"
+
+# Configure
+if typeset -f Configure > /dev/null && [ -z "$MAKEPTF_ACTION" -o "$MAKEPTF_ACTION" == "Configure" ]; then
+  majorinfo "Configure"
+  # Restore environment
+  export INSTALL_PREFIX="$MAKEPTF_INSTALL_PREFIX"
+  export PREFIX="$MAKEPTF_PREFIX"
+  export REPOSITORY="$MAKEPTF_REPOSITORY"
+  export MODULE="$MAKEPTF_MODULE"
+  export TARGET="$MODULE"
+  cd "$MAKEPTF_SRCDIR"
+  # Add trap to function
+  if ! typeset -f Configure | sed "s/^{/{ trap 'return 1' ERR INT TERM/" > "$MAKEPTF_TEMP" || ! source "$MAKEPTF_TEMP"; then
+    error "Failed to set trap in Configure function"
+    exit 61
+  fi
+  # Run function
+  Configure 2>&1 | tee -a "$BUILD_LOG" >&5
+  STATUS=(${PIPESTATUS[@]})
+  if [ ${STATUS[0]} != 0 ]; then
+    error "Configure failed"
+    exit 62
+  fi
+fi
+
+# Make
+if typeset -f Make > /dev/null && [ -z "$MAKEPTF_ACTION" -o "$MAKEPTF_ACTION" == "Make" ]; then
+  majorinfo "Make"
+  # Restore environment
+  export INSTALL_PREFIX="$MAKEPTF_INSTALL_PREFIX"
+  export PREFIX="$MAKEPTF_PREFIX"
+  export REPOSITORY="$MAKEPTF_REPOSITORY"
+  export MODULE="$MAKEPTF_MODULE"
+  export TARGET="$MODULE"
+  cd "$MAKEPTF_SRCDIR"
+  # Add trap to function
+  if ! typeset -f Make | sed "s/^{/{ trap 'return 1' ERR INT TERM/" > "$MAKEPTF_TEMP" || ! source "$MAKEPTF_TEMP"; then
+    error "Failed to set trap in Make function"
+    exit 71
+  fi
+  # Run function
+  Make 2>&1 | tee -a "$BUILD_LOG" >&5
+  STATUS=(${PIPESTATUS[@]})
+  if [ ${STATUS[0]} != 0 ]; then
+    error "Make failed"
+    exit 72
+  fi
+fi
+
+# Test
+if typeset -f Test > /dev/null && [ -n "$MAKEPTF_TEST" ] && [ -z "$MAKEPTF_ACTION" -o "$MAKEPTF_ACTION" == "Test" ]; then
+  majorinfo "Test"
+  # Restore environment
+  export INSTALL_PREFIX="$MAKEPTF_INSTALL_PREFIX"
+  export PREFIX="$MAKEPTF_PREFIX"
+  export REPOSITORY="$MAKEPTF_REPOSITORY"
+  export MODULE="$MAKEPTF_MODULE"
+  export TARGET="$MODULE"
+  cd "$MAKEPTF_SRCDIR"
+  # Add trap to function
+  if ! typeset -f Test | sed "s/^{/{ trap 'return 1' ERR INT TERM/" > "$MAKEPTF_TEMP" || ! source "$MAKEPTF_TEMP"; then
+    error "Failed to set trap in Test function"
+    exit 73
+  fi
+  # Run function
+  Test 2>&1 | tee -a "$BUILD_LOG" >&5
+  STATUS=(${PIPESTATUS[@]})
+  if [ ${STATUS[0]} != 0 ]; then
+    error "Test failed"
+    exit 74
+  fi
+fi
+
+# Install
+if typeset -f Install > /dev/null && [ -z "$MAKEPTF_ACTION" -o "$MAKEPTF_ACTION" == "Install" ]; then
+  majorinfo "Install"
+  # Restore environment
+  export INSTALL_PREFIX="$MAKEPTF_INSTALL_PREFIX"
+  rm -rf "$INSTALL_PREFIX"
+  export PREFIX="$MAKEPTF_PREFIX"
+  export REPOSITORY="$MAKEPTF_REPOSITORY"
+  export MODULE="$MAKEPTF_MODULE"
+  export TARGET="$MODULE"
+  cd "$MAKEPTF_SRCDIR"
+  # Add trap to function
+  if ! typeset -f Install | sed "s/^{/{ trap 'return 1' ERR INT TERM/" > "$MAKEPTF_TEMP" || ! source "$MAKEPTF_TEMP"; then
+    error "Failed to set trap in Install function"
+    exit 81
+  fi
+  # Run function
+  Install 2>&1 | tee -a "$BUILD_LOG" >&5
+  STATUS=(${PIPESTATUS[@]})
+  if [ ${STATUS[0]} != 0 ]; then
+    error "Install failed"
+    exit 82
+  fi
+
+  # Copy files accross
+  action "Installing/updating package"
+
+  if ! chmod -R u+w "$MAKEPTF_INSTALL_PREFIX"/* || ! cp -af "$MAKEPTF_INSTALL_PREFIX"/* "$MAKEPTF_PREFIX"; then
+    error "Error installing package"
+    exit 83
+  fi
+
+  # Report
+  if ! rm -f "$PACKAGE_LOG" || ! echo "$PROG: Package:    $PACKAGE" > "$PACKAGE_LOG"; then
+    error "Error creating package log file"
+    exit 91
+  fi
+  echo "$PROG: Version:    $VERSION" >> "$PACKAGE_LOG"
+  echo "$PROG: License:    $License" >> "$PACKAGE_LOG"
+  echo "$PROG: Maintainer: $Maintainer" >> "$PACKAGE_LOG"
+  if [ -n "$Comments" ]; then
+    echo "$PROG: Comments:   $Comments" >> "$PACKAGE_LOG"
+  fi
+  echo "$PROG: Files:" >> "$PACKAGE_LOG"
+  if ! find "$MAKEPTF_INSTALL_PREFIX" -printf "%y %m %U %G %s %P\n" >> "$PACKAGE_LOG"; then
+    rm -f "$PACKAGE_LOG"
+    error "Error filling in package log file"
+    exit 92
+  fi
+  if ! gzip -9 "$PACKAGE_LOG"; then
+    error "Error compressing package log file"
+    exit 93
+  fi
+fi
+
+# Erase source if required
+if [ -n "$MAKEPTF_ERASESRC" ]; then
+  rm -rf "$MAKEPTF_WORKDIR"
+fi
+
+majorinfo "Success"

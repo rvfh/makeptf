@@ -1,0 +1,43 @@
+# Who brought that package here
+Maintainer="Herve Fache"
+
+# Package information
+Website=""
+License=""
+Description=""
+
+# Comments from maintainer
+Comments=""
+
+# Archive to use
+Archive="tiff-v3.5.7.tar.gz"
+
+# This is package-specific: expected name of configuration file (this is normalised: 'package_name'-'version_string'.config)
+ConfigFile=
+
+# Dependencies (NOTE: if dependencies are unknown, use 'unset Dependencies')
+Dependencies=(
+)
+
+# Patches to apply (in that order)
+Patches=(
+)
+
+# Native/cross-compilation support
+CrossCompilation=no
+NativeCompilation=yes
+
+Configure() {
+  if [ ! -r Makefile ]; then
+    ./configure --prefix="$INSTALL_PREFIX/usr" --noninteractive
+  fi
+}
+
+Make() {
+  $MAKE
+}
+
+Install() {
+  mkdir -p "$INSTALL_PREFIX/usr"
+  $MAKE install
+}
