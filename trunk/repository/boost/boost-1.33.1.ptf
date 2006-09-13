@@ -1,0 +1,48 @@
+# Who brought that package here
+Maintainer="Herve Fache"
+
+# Package information
+Website="http://www.boost.org"
+License="GPL"
+Description="Boost provides free peer-reviewed portable C++ source libraries."
+
+# Comments from maintainer
+Comments=""
+
+# Archive to use and directory it creates (if necessary)
+Archive="boost_1_33_1.tar.bz2"
+Directory="boost_1_33_1"
+
+# This is package-specific: expected name of configuration file (this is normalised: 'package_name'-'version_string'.config)
+ConfigFile=
+
+# Dependencies (NOTE: if dependencies are unknown, use 'unset Dependencies')
+Dependencies=(
+)
+
+# Patches to apply (in that order)
+Patches=(
+)
+
+# Native/cross-compilation support
+CrossCompilation=no
+NativeCompilation=yes
+
+Configure() {
+  if [ ! -r Makefile ]; then
+    ./configure --prefix="$INSTALL_PREFIX/usr"
+  fi
+}
+
+Make() {
+  $MAKE
+}
+
+Install() {
+  $MAKE install
+  cd "$INSTALL_PREFIX/usr/include"
+  ln -s boost* boost
+  if [ -d boost/boost ]; then
+    mv boost/boost/* boost/ && rmdir boost/boost
+  fi
+}

@@ -1,0 +1,8 @@
+To setup the necessary environment, you must first run the setup script
+(./bin/setup from where this file is).
+
+This script will compile a number of packages for use by the makeptf family of
+scripts and create a script called set_path: source this file to add the path to
+the utilities to your PATH variable.
+
+See README file for more info on how to use this software.

@@ -1,0 +1,71 @@
+This software has been written by Herve Fache, between March 2005 and September
+2006.
+
+
+PREREQUISITES
+
+Before you can use the scripts to create packages, disc images and ramdisks,
+you must have set your environment up. Please read the INSTALL file for
+information on how to do that.
+
+CONVENTIONS
+
+I will use the hash sign (#) when showing an example of command to be typed at
+the prompt of a shell.
+
+SETTING THE ENVIRONMENT
+
+To tell the system where to find executables for this software, source the
+set_path file:
+# source set_path
+
+To let the system know where to repository is, source the set_repository file:
+# source set_repository
+
+You are now ready to work.
+
+WHERE TO FIND HELP
+
+The makeptf* scripts have embedded help, and will show usage information when
+invoked with the -h or --help option.
+
+Basically, they try to do most of the work for you.
+
+MAKEPTF
+
+makeptf is the lowest level script and takes a package name as argument.
+makeptf needs to be told where the root of your file system (prefix) is, using
+the -p option. For example:
+# makeptf -p /home/user/infra/projects/myproject/image busybox
+
+You could also set the prefix in you environment, like so:
+# export PREFIX=/home/user/infra/projects/myproject/image
+
+makeptf can also be told which version of the software to use:
+# makeptf busybox 1.00
+
+makeptf is really interested in the configuration file (config) and the package
+configuration file for some packages (busybox, linux kernel).
+The default for the configuration directory is $PREFIX/etc/makeptf/.
+
+Once a package has been added, it is usually compiled as part of an image, using
+makeptf-list.
+
+MAKEPTF-LIST
+
+makeptf-list is used to create a list of packages. The list is in a file called
+list which resides in the configuration directory.
+
+For simplicity, makeptf-list will assume that the prefix is the current
+directory unless told otherwise.
+
+To create a bzip-compressed tar of the resulting build:
+# makeptf-list -P ../package.tar.bz2
+
+To create a gzip-compressed disc image (e.g. a RAM disk):
+# makeptf-list -I ../image.gz
+
+Unfortunately, the kernel creation could not be tested, due to lack of time and
+interest at higher levels.
+
+

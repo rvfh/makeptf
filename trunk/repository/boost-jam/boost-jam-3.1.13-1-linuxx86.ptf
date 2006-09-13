@@ -1,0 +1,37 @@
+# Who brought that package here
+Maintainer="Herve Fache"
+
+# Package information
+Website="http://www.boost.org"
+License="GPL"
+Description="Build tool for the boost libraries."
+
+# Comments from maintainer
+Comments=""
+
+# Archive to use and directory it creates (if necessary)
+Archive=boost-jam-3.1.13-1-linuxx86.tgz
+
+# This is package-specific: expected name of configuration file (this is normalised: 'package_name'-'version_string'.config)
+ConfigFile=
+
+# Dependencies (NOTE: if dependencies are unknown, use 'unset Dependencies')
+Dependencies=(
+)
+
+# Patches to apply (in that order)
+Patches=(
+)
+
+# Native/cross-compilation support
+CrossCompilation=no
+NativeCompilation=yes
+
+unset Configure
+
+unset Make
+
+Install() {
+  mkdir -p "$INSTALL_PREFIX/usr/lib"
+  cp -a bjam "$INSTALL_PREFIX/usr/lib/"
+}

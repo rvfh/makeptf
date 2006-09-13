@@ -1,0 +1,29 @@
+# We are compiling natively
+# Architecture
+export ARCH=`uname -m`
+
+# Cross-compiler
+unset CROSS_COMPILE
+
+# Make tools
+export MAKE=make
+
+export AR="$CROSS_COMPILE"ar
+export AS="$CROSS_COMPILE"as
+export CC="$CROSS_COMPILE"gcc
+export CPP="$CROSS_COMPILE"cpp
+export CXX="$CROSS_COMPILE"g++
+export LD="$CROSS_COMPILE"ld
+export NM="$CROSS_COMPILE"nm
+export OBJCOPY="$CROSS_COMPILE"objcopy
+export RANLIB="$CROSS_COMPILE"ranlib
+export STRIP="$CROSS_COMPILE"strip
+# This list is not exhaustive, but is sufficient so far
+
+# Global $(CC) and $(LD) flags
+export CFLAGS_ARCH=""
+export CFLAGS_OPT="-O2"
+export CFLAGS_WARN="-Wall -W -Wunused -Wpointer-arith -Wcast-align -Wwrite-strings -Wmissing-prototypes -Wmissing-declarations -Wnested-externs"
+export CFLAGS="$CFLAGS_ARCH $CFLAGS_OPT $CFLAGS_WARN -I$PREFIX/usr/include -I/usr/include"
+export CFLAGS_NOOPT="$CFLAGS_ARCH $CFLAGS_WARN -I$PREFIX/usr/include -I/usr/include"
+export LDFLAGS="-L$PREFIX/lib -L$PREFIX/usr/lib"

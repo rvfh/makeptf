@@ -1,0 +1,47 @@
+# Who brought that package here
+Maintainer="Herve Fache"
+
+# Package information
+Website="http://www.python.org/"
+License="Python License"
+Description="Python is a dynamic object-oriented programming language that can be used for many kinds of software development. It offers strong support for integration with other languages and tools, comes with extensive standard libraries, and can be learned in a few days. Many Python programmers report substantial productivity gains and feel the language encourages the development of higher quality, more maintainable code."
+
+# Comments from maintainer
+Comments=""
+
+# Archive to use
+Archive="Python-2.3.5.tar.bz2"
+Directory=Python-2.3.5
+
+# This is package-specific: expected name of configuration file (this is normalised: 'package_name'-'version_string'.config)
+ConfigFile=
+
+# Dependencies (NOTE: if dependencies are unknown, use 'unset Dependencies')
+Dependencies=(
+)
+
+# Patches to apply (in that order)
+Patches=(
+)
+
+# Native/cross-compilation support
+CrossCompilation=no
+NativeCompilation=yes
+
+Configure() {
+  if [ ! -r Makefile ]; then
+    ./configure --prefix="$INSTALL_PREFIX/usr"
+  fi
+}
+
+Make() {
+  $MAKE
+}
+
+Install() {
+  $MAKE install
+}
+
+Test() {
+  $MAKE test
+}

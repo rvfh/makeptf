@@ -1,0 +1,40 @@
+# Who brought that package here
+Maintainer="Herve Fache"
+
+# Package information
+Website="http://genext2fs.sourceforge.net/"
+License="GPL"
+Description="genext2fs generates an ext2 filesystem as a normal (non-root) user. It does not require you to mount the image file to copy files on it, nor does it require that you become the superuser to make device nodes."
+
+# Comments from maintainer
+Comments=""
+
+# Archive to use
+Archive="genext2fs-1.4rc1.tar.gz"
+
+# This is package-specific: expected name of configuration file (this is normalised: 'package_name'-'version_string'.config)
+ConfigFile=
+
+# Dependencies (NOTE: if dependencies are unknown, use 'unset Dependencies')
+Dependencies=(
+)
+
+# Patches to apply (in that order)
+Patches=(
+)
+
+# Native/cross-compilation support
+CrossCompilation=no
+NativeCompilation=yes
+
+Configure() {
+	./configure --prefix="$INSTALL_PREFIX/usr"
+}
+
+Make() {
+	$MAKE
+}
+
+Install() {
+	$MAKE install
+}
