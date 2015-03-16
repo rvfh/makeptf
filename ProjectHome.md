@@ -1,0 +1,1 @@
+This is a set of tools I have been developing that can be used for cross-and native compilation. They provide an environment to easily mix cross- and native compilation if necessary.
